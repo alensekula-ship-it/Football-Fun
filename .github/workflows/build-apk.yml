@@ -60,9 +60,14 @@ jobs:
           echo "Project found:"
           echo "$PROJECT_DIR"
 
-      - name: Grant Gradle permission
+      - name: Check Gradle Wrapper
         run: |
-          chmod +x "$PROJECT_DIR/gradlew"
+          if [ -f "${{ env.PROJECT_DIR }}/gradlew" ]; then
+            chmod +x "${{ env.PROJECT_DIR }}/gradlew"
+          else
+            echo "Gradle Wrapper not found."
+            exit 1
+          fi
 
       - name: Build Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -76,16 +81,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: FootballFun-APK
-          path: |
-            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
           name: FootballFun-AAB
-          path: |
-            ${{ env.PROJECT_DIR }}/app/build/outputs/bundle/release/*.aab
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
 
-      - name: Build summary
+      - name: Build Summary
         run: |
           echo "Football Fun build completed successfully."
