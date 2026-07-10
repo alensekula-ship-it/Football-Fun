@@ -16,6 +16,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -42,40 +43,38 @@ jobs:
             exit 1
           fi
 
-      - name: Unpack project
+          unzip -t "$GITHUB_WORKSPACE/FootballFun.zip"
+
+      - name: Extract Football Fun project
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf "$GITHUB_WORKSPACE/project"
-          mkdir -p "$GITHUB_WORKSPACE/project"
+          rm -rf "$GITHUB_WORKSPACE/extracted"
+          mkdir -p "$GITHUB_WORKSPACE/extracted"
 
           unzip -q "$GITHUB_WORKSPACE/FootballFun.zip" \
-            -d "$GITHUB_WORKSPACE/project"
+            -d "$GITHUB_WORKSPACE/extracted"
 
-      - name: Locate Android project
-        shell: bash
-        run: |
-          set -euo pipefail
+          PROJECT_DIR="$GITHUB_WORKSPACE/extracted/FootballFun"
 
-          SETTINGS_FILE="$(find "$GITHUB_WORKSPACE/project" \
-            -type f \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            | head -n 1)"
-
-          if [ -z "$SETTINGS_FILE" ]; then
+          if [ ! -f "$PROJECT_DIR/settings.gradle" ]; then
             echo "ERROR: settings.gradle nije pronađen."
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+            echo "ERROR: app/build.gradle nije pronađen."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/worldcupfan2026-test-update.jks" ]; then
+            echo "ERROR: Potpisni ključ nije pronađen."
+            exit 1
+          fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Projekt: $PROJECT_DIR"
-
-      - name: Show Gradle version
-        shell: bash
-        run: gradle --version
+          echo "Projekt pronađen: $PROJECT_DIR"
 
       - name: Build Debug APK
         shell: bash
@@ -91,49 +90,43 @@ jobs:
           set -euo pipefail
           gradle --no-daemon --stacktrace bundleRelease
 
-      - name: Find APK
+      - name: Collect build files
         shell: bash
         run: |
           set -euo pipefail
 
-          APK_PATH="$(find "$PROJECT_DIR" \
-            -type f \
-            -name "*.apk" \
-            | head -n 1)"
+          APK_PATH="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          AAB_PATH="$PROJECT_DIR/app/build/outputs/bundle/release/app-release.aab"
 
-          if [ -z "$APK_PATH" ]; then
-            echo "ERROR: APK nije pronađen."
-            find "$PROJECT_DIR" -type f -path "*/build/outputs/*" || true
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK nije napravljen."
+            find "$PROJECT_DIR/app/build/outputs" -type f || true
             exit 1
           fi
 
-          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
-          echo "APK: $APK_PATH"
-
-      - name: Find AAB
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          AAB_PATH="$(find "$PROJECT_DIR" \
-            -type f \
-            -name "*.aab" \
-            | head -n 1)"
-
-          if [ -z "$AAB_PATH" ]; then
-            echo "ERROR: AAB nije pronađen."
-            find "$PROJECT_DIR" -type f -path "*/build/outputs/*" || true
+          if [ ! -f "$AAB_PATH" ]; then
+            echo "ERROR: AAB nije napravljen."
+            find "$PROJECT_DIR/app/build/outputs" -type f || true
             exit 1
           fi
 
-          echo "AAB_PATH=$AAB_PATH" >> "$GITHUB_ENV"
-          echo "AAB: $AAB_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/output"
+
+          cp "$APK_PATH" \
+            "$GITHUB_WORKSPACE/output/FootballFun-debug.apk"
+
+          cp "$AAB_PATH" \
+            "$GITHUB_WORKSPACE/output/FootballFun-release.aab"
+
+          cd "$GITHUB_WORKSPACE/output"
+          sha256sum FootballFun-debug.apk FootballFun-release.aab \
+            > SHA256SUMS.txt
 
       - name: Upload Football Fun APK
         uses: actions/upload-artifact@v4
         with:
           name: FootballFun-APK
-          path: ${{ env.APK_PATH }}
+          path: output/FootballFun-debug.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -141,7 +134,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: FootballFun-AAB
-          path: ${{ env.AAB_PATH }}
+          path: |
+            output/FootballFun-release.aab
+            output/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -151,6 +146,6 @@ jobs:
           {
             echo "## Football Fun build uspješan"
             echo ""
-            echo "- APK napravljen"
-            echo "- AAB napravljen"
+            echo "- FootballFun-debug.apk"
+            echo "- FootballFun-release.aab"
           } >> "$GITHUB_STEP_SUMMARY"
