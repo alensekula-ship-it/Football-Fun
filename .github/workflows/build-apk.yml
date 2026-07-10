@@ -31,66 +31,158 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Verify FootballFun.zip exists
+        shell: bash
         run: |
-          if [ ! -f FootballFun.zip ]; then
-            echo "ERROR: FootballFun.zip not found!"
+          set -e
+
+          if [ ! -f "$GITHUB_WORKSPACE/FootballFun.zip" ]; then
+            echo "ERROR: FootballFun.zip nije pronađen u glavnoj mapi repozitorija."
             exit 1
           fi
+
+          echo "FootballFun.zip je pronađen."
 
       - name: Unzip project
+        shell: bash
         run: |
-          rm -rf project
-          mkdir project
-          unzip -q FootballFun.zip -d project
+          set -e
+
+          rm -rf "$GITHUB_WORKSPACE/project"
+          mkdir -p "$GITHUB_WORKSPACE/project"
+
+          unzip -q "$GITHUB_WORKSPACE/FootballFun.zip" \
+            -d "$GITHUB_WORKSPACE/project"
+
+          echo "Projekt je raspakiran."
 
       - name: Locate Android project
+        shell: bash
         run: |
-          PROJECT_DIR=$(find project -name settings.gradle -exec dirname {} \; | head -n 1)
+          set -e
 
-          if [ -z "$PROJECT_DIR" ]; then
-            PROJECT_DIR=$(find project -name settings.gradle.kts -exec dirname {} \; | head -n 1)
-          fi
+          SETTINGS_FILE="$(find "$GITHUB_WORKSPACE/project" \
+            -type f \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            | head -n 1)"
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "Android project not found!"
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: Android projekt nije pronađen."
+            echo "Nedostaje settings.gradle ili settings.gradle.kts."
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
-          echo "Project found:"
-          echo "$PROJECT_DIR"
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
 
-      - name: Check Gradle Wrapper
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android projekt pronađen u: $PROJECT_DIR"
+
+      - name: Prepare Gradle
+        shell: bash
         run: |
-          if [ -f "${{ env.PROJECT_DIR }}/gradlew" ]; then
-            chmod +x "${{ env.PROJECT_DIR }}/gradlew"
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            echo "USE_WRAPPER=true" >> "$GITHUB_ENV"
+            echo "Koristit će se Gradle Wrapper."
           else
-            echo "Gradle Wrapper not found."
-            exit 1
+            echo "USE_WRAPPER=false" >> "$GITHUB_ENV"
+            echo "Gradle Wrapper nije pronađen. Koristit će se instalirani Gradle."
           fi
 
       - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: ./gradlew assembleDebug --stacktrace
+        shell: bash
+        run: |
+          set -e
 
-      - name: Build Release Bundle (AAB)
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: ./gradlew bundleRelease --stacktrace
+          cd "$PROJECT_DIR"
 
-      - name: Upload APK
+          if [ "$USE_WRAPPER" = "true" ]; then
+            ./gradlew --no-daemon --stacktrace assembleDebug
+          else
+            gradle --no-daemon --stacktrace assembleDebug
+          fi
+
+      - name: Build Release AAB
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          if [ "$USE_WRAPPER" = "true" ]; then
+            ./gradlew --no-daemon --stacktrace bundleRelease
+          else
+            gradle --no-daemon --stacktrace bundleRelease
+          fi
+
+      - name: Find generated APK
+        shell: bash
+        run: |
+          set -e
+
+          APK_PATH="$(find "$PROJECT_DIR" \
+            -type f \
+            -name "*.apk" \
+            -path "*/build/outputs/apk/*" \
+            | head -n 1)"
+
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: APK nije pronađen nakon builda."
+            echo "Pronađene build output datoteke:"
+            find "$PROJECT_DIR" -type f -path "*/build/outputs/*" || true
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
+          echo "APK pronađen: $APK_PATH"
+
+      - name: Find generated AAB
+        shell: bash
+        run: |
+          set -e
+
+          AAB_PATH="$(find "$PROJECT_DIR" \
+            -type f \
+            -name "*.aab" \
+            -path "*/build/outputs/bundle/*" \
+            | head -n 1)"
+
+          if [ -z "$AAB_PATH" ]; then
+            echo "ERROR: AAB nije pronađen nakon builda."
+            echo "Pronađene build output datoteke:"
+            find "$PROJECT_DIR" -type f -path "*/build/outputs/*" || true
+            exit 1
+          fi
+
+          echo "AAB_PATH=$AAB_PATH" >> "$GITHUB_ENV"
+          echo "AAB pronađen: $AAB_PATH"
+
+      - name: Upload Football Fun APK
         uses: actions/upload-artifact@v4
         with:
           name: FootballFun-APK
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
+          retention-days: 30
 
-      - name: Upload AAB
+      - name: Upload Football Fun AAB
         uses: actions/upload-artifact@v4
         with:
           name: FootballFun-AAB
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/bundle/release/*.aab
+          path: ${{ env.AAB_PATH }}
           if-no-files-found: error
+          retention-days: 30
 
-      - name: Build Summary
+      - name: Build summary
+        shell: bash
         run: |
-          echo "Football Fun build completed successfully."
+          {
+            echo "## Football Fun build uspješan"
+            echo ""
+            echo "- APK: \`$APK_PATH\`"
+            echo "- AAB: \`$AAB_PATH\`"
+            echo "- Projekt: \`$PROJECT_DIR\`"
+          } >> "$GITHUB_STEP_SUMMARY"
