@@ -1,4 +1,4 @@
-name: Build Football Fun
+name: Football Fun Professional QA + Auto-Fix
 
 on:
   push:
@@ -13,10 +13,9 @@ permissions:
   contents: read
 
 jobs:
-  qa-and-build:
-    name: QA + Build
+  qa-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -33,170 +32,70 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Validate FootballFun ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-          ZIP="$GITHUB_WORKSPACE/FootballFun.zip"
-          test -f "$ZIP"
-          ls -lh "$ZIP"
-          unzip -t "$ZIP" >/dev/null
-          echo "ZIP integrity: PASS"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Extract project
+      - name: Install Auto-QA dependencies
+        run: python -m pip install --disable-pip-version-check pillow
+
+      - name: Extract FootballFun.zip
         shell: bash
         run: |
           set -euo pipefail
+          test -f "$GITHUB_WORKSPACE/FootballFun.zip"
           rm -rf "$GITHUB_WORKSPACE/extracted"
           mkdir -p "$GITHUB_WORKSPACE/extracted"
-
-          unzip -q "$GITHUB_WORKSPACE/FootballFun.zip" \
-            -d "$GITHUB_WORKSPACE/extracted"
-
+          unzip -q "$GITHUB_WORKSPACE/FootballFun.zip" -d "$GITHUB_WORKSPACE/extracted"
           PROJECT_DIR="$GITHUB_WORKSPACE/extracted/FootballFun"
-
           test -f "$PROJECT_DIR/settings.gradle"
-          test -f "$PROJECT_DIR/build.gradle"
           test -f "$PROJECT_DIR/app/build.gradle"
-          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml"
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project structure: PASS"
 
-      - name: Show version
-        shell: bash
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          set -euo pipefail
-          grep -E "versionCode|versionName" app/build.gradle || true
+      - name: Football Fun safe auto-fix
+        run: python footballfun_autofix.py "$PROJECT_DIR"
+
+      - name: Football Fun custom QA
+        run: python footballfun_qa.py "$PROJECT_DIR"
 
       - name: Clean project
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          set -euo pipefail
-          gradle \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all \
-            clean
+        run: gradle --no-daemon clean
 
       - name: Compile Debug
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          set -euo pipefail
-          gradle \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all \
-            compileDebugJavaWithJavac
+        run: gradle --no-daemon --stacktrace --warning-mode all compileDebugJavaWithJavac
 
       - name: Run unit tests
-        id: unit_tests
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          gradle \
-            --no-daemon \
-            --stacktrace \
-            testDebugUnitTest
-
-      - name: Upload unit test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: FootballFun-Unit-Test-Reports
-          path: |
-            ${{ env.PROJECT_DIR }}/app/build/reports/tests
-            ${{ env.PROJECT_DIR }}/app/build/test-results
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Fail on unit test errors
-        if: steps.unit_tests.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "Unit tests failed. Reports were uploaded."
-          exit 1
+        run: gradle --no-daemon --stacktrace testDebugUnitTest
 
       - name: Run Android Lint
-        id: lint
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          gradle \
-            --no-daemon \
-            --stacktrace \
-            lintDebug
-
-      - name: Upload Lint reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: FootballFun-Lint-Reports
-          path: |
-            ${{ env.PROJECT_DIR }}/app/build/reports/lint-results-debug.html
-            ${{ env.PROJECT_DIR }}/app/build/reports/lint-results-debug.xml
-            ${{ env.PROJECT_DIR }}/app/build/reports/lint-results-debug.txt
-            ${{ env.PROJECT_DIR }}/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Fail on Lint errors
-        if: steps.lint.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "Android Lint failed. Full reports were uploaded as FootballFun-Lint-Reports."
-          exit 1
+        run: gradle --no-daemon --stacktrace lintDebug
 
       - name: Build Debug APK
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          set -euo pipefail
-          gradle \
-            --no-daemon \
-            --stacktrace \
-            assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug
 
       - name: Build Release AAB
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          set -euo pipefail
-          gradle \
-            --no-daemon \
-            --stacktrace \
-            bundleRelease
+        run: gradle --no-daemon --stacktrace bundleRelease
 
       - name: Collect outputs
         shell: bash
         run: |
           set -euo pipefail
-
-          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" \
-            -type f -name '*.apk' | head -n 1)"
-
-          AAB="$(find "$PROJECT_DIR/app/build/outputs/bundle" \
-            -type f -name '*.aab' | head -n 1)"
-
-          test -n "$APK"
-          test -f "$APK"
-          test -n "$AAB"
-          test -f "$AAB"
-
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk" -type f -name '*.apk' | head -n 1)"
+          AAB="$(find "$PROJECT_DIR/app/build/outputs/bundle" -type f -name '*.aab' | head -n 1)"
+          test -n "$APK" && test -f "$APK"
+          test -n "$AAB" && test -f "$AAB"
           mkdir -p "$GITHUB_WORKSPACE/output"
-
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/output/FootballFun-debug.apk"
-
-          cp "$AAB" \
-            "$GITHUB_WORKSPACE/output/FootballFun-release.aab"
+          cp "$APK" "$GITHUB_WORKSPACE/output/FootballFun-debug.apk"
+          cp "$AAB" "$GITHUB_WORKSPACE/output/FootballFun-release-unsigned.aab"
+          cd "$GITHUB_WORKSPACE/extracted"
+          zip -qr "$GITHUB_WORKSPACE/output/FootballFun-AutoFixed.zip" FootballFun
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -210,6 +109,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: FootballFun-AAB
-          path: output/FootballFun-release.aab
+          path: output/FootballFun-release-unsigned.aab
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Auto-Fixed Source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: FootballFun-AutoFixed-Source
+          path: output/FootballFun-AutoFixed.zip
           if-no-files-found: error
           retention-days: 30
